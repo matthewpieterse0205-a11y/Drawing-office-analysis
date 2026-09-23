@@ -29,14 +29,55 @@ def normalize_jobs(df):
     df["repeat_count"]=df.groupby("job_number")["job_number"].transform("count").fillna(0).astype(int)
     return df
 
-def apply_filters(df,start_date,end_date,people,customers,job_types,priorities,stages,job_search):
-    x=df[(df["created_at"].dt.date>=start_date)&(df["created_at"].dt.date<=end_date)].copy()
-    if people: x=x[x["assignees"].apply(lambda s:any(p in [q.strip() for q in str(s).split("|")] for p in people))]
-    if customers: x=x[x["customer"].isin(customers)]
-    if job_types: x=x[x["job_type"].isin(job_types)]
-    if priorities: x=x[x["priority"].isin(priorities)]
-    if stages: x=x[x["stage"].isin(stages)]
-    if job_search: x=x[x["job_number"].astype(str).str.contains(job_search,case=False,na=False)]
+def apply_filters(
+    df,
+    start_date,
+    end_date,
+    people,
+    customers,
+    job_types,
+    priorities,
+    stages,
+    job_search,
+    date_field="created_at"
+):
+    x = df.copy()
+
+    if start_date is not None and end_date is not None:
+        x = x[
+            (x[date_field].dt.date >= start_date) &
+            (x[date_field].dt.date <= end_date)
+        ].copy()
+
+    if people:
+        x = x[
+            x["assignees"].apply(
+                lambda s: any(
+                    p in [q.strip() for q in str(s).split("|")]
+                    for p in people
+                )
+            )
+        ]
+
+    if customers:
+        x = x[x["customer"].isin(customers)]
+
+    if job_types:
+        x = x[x["job_type"].isin(job_types)]
+
+    if priorities:
+        x = x[x["priority"].isin(priorities)]
+
+    if stages:
+        x = x[x["stage"].isin(stages)]
+
+    if job_search:
+        x = x[
+            x["job_number"]
+            .astype(str)
+            .str.contains(job_search, case=False, na=False)
+        ]
+
     return x
 
 def overview_metrics(df):
@@ -55,18 +96,103 @@ def overview_metrics(df):
         "backlog_jobs":len(backlog)
     }
 
-def monthly_summary(df):
-    if df.empty: return pd.DataFrame(columns=["month","jobs_received","jobs_completed","total_drawings","new_drawings","release_drawings","avg_drawings_per_job","avg_turnaround_days","avg_waiting_days","avg_active_days","avg_time_per_drawing_days"])
-    x=df.copy(); x["month"]=x["created_at"].dt.to_period("M").astype(str)
-    rows=[]
-    for m,g in x.groupby("month",sort=True):
-        c=g[g["completed_at"].notna()]; td=g["drawing_count"].fillna(0).sum()
-        rows.append({"month":m,"jobs_received":len(g),"jobs_completed":len(c),"total_drawings":td,
-        "new_drawings":g.loc[g["job_type"]=="New","drawing_count"].fillna(0).sum(),
-        "release_drawings":g.loc[g["job_type"]=="Release","drawing_count"].fillna(0).sum(),
-        "avg_drawings_per_job":td/len(g) if len(g) else 0,
-        "avg_turnaround_days":c["turnaround_days"].mean(),"avg_waiting_days":c["waiting_days"].mean(),
-        "avg_active_days":c["active_days"].mean(),"avg_time_per_drawing_days":c["time_per_drawing_days"].mean()})
+def monthly_summary(df, start_date=None, end_date=None):
+    columns = [
+        "month",
+        "jobs_received",
+        "jobs_completed",
+        "total_drawings",
+        "new_drawings",
+        "release_drawings",
+        "avg_drawings_per_job",
+        "avg_turnaround_days",
+    ]
+
+    if df.empty:
+        return pd.DataFrame(columns=columns)
+
+    x = df.copy()
+
+    # April must never appear as a reporting month
+    report_start = pd.Timestamp("2026-05-01")
+
+    # Use selected date range, but never display anything before May 2026
+    if start_date is None:
+        effective_start = report_start
+    else:
+        effective_start = max(
+            pd.Timestamp(start_date),
+            report_start
+        )
+
+    if end_date is None:
+        effective_end = pd.Timestamp.today()
+    else:
+        effective_end = pd.Timestamp(end_date)
+
+    # Create the reporting months from the selected range
+    months = pd.period_range(
+        effective_start,
+        effective_end,
+        freq="M"
+    )
+
+    rows = []
+
+    for month in months:
+
+        month_start = month.start_time
+        month_end = month.end_time
+
+        # RECEIVED uses created_at
+        received = x[
+            (x["created_at"] >= month_start) &
+            (x["created_at"] <= month_end)
+        ]
+
+        # COMPLETED uses completed_at
+        # This includes jobs created before the selected period
+        completed = x[
+            (x["completed_at"].notna()) &
+            (x["completed_at"] >= month_start) &
+            (x["completed_at"] <= month_end)
+        ]
+
+        total_drawings = received["drawing_count"].fillna(0).sum()
+
+        rows.append({
+            "month": month.strftime("%b %Y"),
+
+            "jobs_received":
+                len(received),
+
+            "jobs_completed":
+                len(completed),
+
+            "total_drawings":
+                total_drawings,
+
+            "new_drawings":
+                received.loc[
+                    received["job_type"] == "New",
+                    "drawing_count"
+                ].fillna(0).sum(),
+
+            "release_drawings":
+                received.loc[
+                    received["job_type"] == "Release",
+                    "drawing_count"
+                ].fillna(0).sum(),
+
+            "avg_drawings_per_job":
+                total_drawings / len(received)
+                if len(received) else 0,
+
+            "avg_turnaround_days":
+                completed["turnaround_days"].mean()
+                if len(completed) else 0,
+        })
+
     return pd.DataFrame(rows).fillna(0)
 
 def draughtsman_summary(df):
@@ -74,9 +200,9 @@ def draughtsman_summary(df):
     for _,r in df.iterrows():
         for p in [x.strip() for x in str(r["assignees"]).split("|") if x.strip()]:
             rows.append({"draughtsman":p,"job_number":r["job_number"],"credited_drawings":r["credited_drawings_per_person"],"turnaround_days":r["turnaround_days"],"waiting_days":r["waiting_days"],"active_days":r["active_days"]})
-    if not rows: return pd.DataFrame(columns=["draughtsman","jobs","credited_drawings","avg_turnaround_days","avg_waiting_days","avg_active_days"])
+    if not rows: return pd.DataFrame(columns=["draughtsman","jobs","credited_drawings","avg_turnaround_days"])
     x=pd.DataFrame(rows)
-    return x.groupby("draughtsman",as_index=False).agg(jobs=("job_number","count"),credited_drawings=("credited_drawings","sum"),avg_turnaround_days=("turnaround_days","mean"),avg_waiting_days=("waiting_days","mean"),avg_active_days=("active_days","mean")).fillna(0)
+    return x.groupby("draughtsman",as_index=False).agg(jobs=("job_number","count"),credited_drawings=("credited_drawings","sum"),avg_turnaround_days=("turnaround_days","mean")).fillna(0)
 
 def current_workload(df):
     x=df[df["stage"].isin(["Not Started","In Progress","On Hold"])].copy()
