@@ -122,9 +122,24 @@ elif page == "Monthly Performance":
    
 
 elif page == "Draughtsmen":
-    ds = draughtsman_summary(base_filtered)
+    ds = draughtsman_summary(completed_filtered)
     st.caption("Shared drawings are split equally and each person's credit is rounded up.")
     st.dataframe(ds, use_container_width=True, hide_index=True)
+    st.plotly_chart(
+    px.bar(
+        ds,
+        x="draughtsman",
+        y=["new_drawings", "release_drawings"],
+        barmode="group",
+        title="New vs Release Drawings by Draughtsman",
+        labels={
+            "value": "Credited Drawings",
+            "draughtsman": "Draughtsman",
+            "variable": "Drawing Type"
+        }
+    ),
+    use_container_width=True
+)
 
 elif page == "Jobs":
     cols = [

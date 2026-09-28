@@ -196,13 +196,63 @@ def monthly_summary(df, start_date=None, end_date=None):
     return pd.DataFrame(rows).fillna(0)
 
 def draughtsman_summary(df):
-    rows=[]
-    for _,r in df.iterrows():
-        for p in [x.strip() for x in str(r["assignees"]).split("|") if x.strip()]:
-            rows.append({"draughtsman":p,"job_number":r["job_number"],"credited_drawings":r["credited_drawings_per_person"],"turnaround_days":r["turnaround_days"],"waiting_days":r["waiting_days"],"active_days":r["active_days"]})
-    if not rows: return pd.DataFrame(columns=["draughtsman","jobs","credited_drawings","avg_turnaround_days"])
-    x=pd.DataFrame(rows)
-    return x.groupby("draughtsman",as_index=False).agg(jobs=("job_number","count"),credited_drawings=("credited_drawings","sum"),avg_turnaround_days=("turnaround_days","mean")).fillna(0)
+    rows = []
+
+    for _, r in df.iterrows():
+        people = [
+            x.strip()
+            for x in str(r["assignees"]).split("|")
+            if x.strip()
+        ]
+
+        for p in people:
+            rows.append({
+                "draughtsman": p,
+                "job_number": r["job_number"],
+                "job_type": r["job_type"],
+                "credited_drawings": r["credited_drawings_per_person"],
+                "turnaround_days": r["turnaround_days"],
+            })
+
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "draughtsman",
+                "jobs",
+                "credited_drawings",
+                "new_drawings",
+                "release_drawings",
+                "avg_turnaround_days",
+            ]
+        )
+
+    x = pd.DataFrame(rows)
+
+    x["new_drawings"] = x.apply(
+        lambda r: r["credited_drawings"]
+        if r["job_type"] == "New"
+        else 0,
+        axis=1
+    )
+
+    x["release_drawings"] = x.apply(
+        lambda r: r["credited_drawings"]
+        if r["job_type"] == "Release"
+        else 0,
+        axis=1
+    )
+
+    return (
+        x.groupby("draughtsman", as_index=False)
+        .agg(
+            jobs=("job_number", "count"),
+            credited_drawings=("credited_drawings", "sum"),
+            new_drawings=("new_drawings", "sum"),
+            release_drawings=("release_drawings", "sum"),
+            avg_turnaround_days=("turnaround_days", "mean"),
+        )
+        .fillna(0)
+    )
 
 def current_workload(df):
     x=df[df["stage"].isin(["Not Started","In Progress","On Hold"])].copy()
