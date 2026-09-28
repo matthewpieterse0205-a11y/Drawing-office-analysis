@@ -4,6 +4,26 @@ import plotly.express as px
 from odoo_client import OdooClient
 from metrics import normalize_jobs, apply_filters, overview_metrics, monthly_summary, draughtsman_summary, current_workload
 
+def check_password():
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+
+    if not st.session_state.authenticated:
+        st.title("Drawing Office Dashboard")
+
+        password = st.text_input("Password", type="password")
+
+        if st.button("Login"):
+            if password == st.secrets["auth"]["password"]:
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("Incorrect password")
+
+        st.stop()
+
+check_password()
+
 st.set_page_config(page_title="Drawing Office Dashboard", page_icon="📐", layout="wide")
 st.markdown("""
 <style>
